@@ -1,6 +1,4 @@
 """
-baseline_vs_rewrite.py
-======================
 Synthetic dataset generation pipeline + scalar reward model training
 for RLHF, comparing a rewrite-augmented model against a baseline.
 
@@ -26,11 +24,6 @@ from reward_model import (
     RLHFPairDataset,
 )
 
-
-# ---------------------------------------------------------------------------
-# 0. Sanity checks
-# ---------------------------------------------------------------------------
-
 def check_environment():
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "NOT found"
     print("GPU:", gpu)
@@ -39,10 +32,7 @@ def check_environment():
         status = "✓" if os.path.exists(fname) else "✗ MISSING:"
         print(status, fname)
 
-
-# ---------------------------------------------------------------------------
 # 1. Generate synthetic dataset (test run — 10 samples)
-# ---------------------------------------------------------------------------
 
 def generate_test_dataset(api_key: str, output_dir: str = "./rlhf_data_test"):
     config = PipelineConfig(
@@ -62,10 +52,7 @@ def generate_test_dataset(api_key: str, output_dir: str = "./rlhf_data_test"):
     print("\nREJECTED :", sample["response_rejected"][:100])
     print("\nFEEDBACK :", sample["rewrite_feedback"])
 
-
-# ---------------------------------------------------------------------------
 # 2. Generate full dataset (100 samples)
-# ---------------------------------------------------------------------------
 
 def generate_full_dataset(api_key: str, output_dir: str = "./rlhf_data"):
     config = PipelineConfig(
@@ -78,25 +65,18 @@ def generate_full_dataset(api_key: str, output_dir: str = "./rlhf_data"):
     pipeline.run()
     print_dataset_stats(output_dir)
 
-
-# ---------------------------------------------------------------------------
 # 3. Inspect dataset
-# ---------------------------------------------------------------------------
 
 def inspect_dataset(data_dir: str = "./rlhf_data"):
     df = pd.read_csv(f"{data_dir}/rlhf_dataset.csv")
     cols = ["prompt", "rewrite_feedback", "quality_score_chosen", "quality_score_rejected"]
     print(df[cols].head(3).to_string())
 
-
-# ---------------------------------------------------------------------------
 # 4. Baseline reward model (no rewrite augmentation)
-# ---------------------------------------------------------------------------
 
 class BaselineRLHFPairDataset(RLHFPairDataset):
     def __init__(self, samples, tokenizer, max_length):
         super().__init__(samples, tokenizer, max_length, augment_with_rewrite=False)
-
 
 class BaselineRewardModelTrainer(RewardModelTrainer):
     def _load_data(self):
@@ -134,11 +114,8 @@ def train_baseline_reward_model(data_path: str = "./rlhf_data/rlhf_dataset.json"
     )
     trainer = BaselineRewardModelTrainer(config)
     trainer.train()
-
-
-# ---------------------------------------------------------------------------
+    
 # 5. Rewrite reward model
-# ---------------------------------------------------------------------------
 
 def train_rewrite_reward_model(data_path: str = "./rlhf_data/rlhf_dataset.json"):
     config = RewardModelConfig(
@@ -152,10 +129,7 @@ def train_rewrite_reward_model(data_path: str = "./rlhf_data/rlhf_dataset.json")
     trainer = RewardModelTrainer(config)
     trainer.train()
 
-
-# ---------------------------------------------------------------------------
 # 6. Scoring helper
-# ---------------------------------------------------------------------------
 
 def score_response(model_dir: str, prompt: str, response: str, config: RewardModelConfig) -> float:
     model_dir = os.path.abspath(model_dir)
@@ -183,10 +157,7 @@ def score_response(model_dir: str, prompt: str, response: str, config: RewardMod
         )
     return score.item()
 
-
-# ---------------------------------------------------------------------------
 # 7. In-distribution evaluation
-# ---------------------------------------------------------------------------
 
 IN_DIST_TEST_CASES = [
     {
@@ -234,10 +205,7 @@ def evaluate_in_distribution():
             print(f"{tc['prompt'][:34]:<35} {label:<12} {g:>8.4f} {b:>8.4f} {g - b:>8.4f}")
         print()
 
-
-# ---------------------------------------------------------------------------
 # 8. Out-of-distribution evaluation
-# ---------------------------------------------------------------------------
 
 OOD_TEST_CASES = [
     {
@@ -282,66 +250,7 @@ def evaluate_ood():
             print(f"{tc['prompt'][:34]:<35} {label:<12} {g:>8.4f} {b:>8.4f} {g - b:>8.4f}")
         print()
 
-
-# ---------------------------------------------------------------------------
-# 9. Final comparison table
-# ---------------------------------------------------------------------------
-
-RESULTS = [
-    # (prompt_short,         type,       rewrite_good, rewrite_bad, baseline_good, baseline_bad)
-    ("Gradient descent",    "In-dist",  -1.2395, -1.6480, -0.0721, -0.2955),
-    ("Precision vs Recall", "In-dist",  -0.2325, -1.6309, -0.0106, -0.1492),
-    ("BERT vs GPT",         "In-dist",  -1.1165, -1.6072, -0.1860, -0.3832),
-    ("Haiku (ML)",          "OOD",      -1.6324, -1.5723, -0.1472, -0.1621),
-    ("Refrigerator",        "OOD",      -1.2767, -1.5057, -0.1144, -0.1734),
-    ("Australia capital",   "OOD",      -1.4999, -1.6471, -0.3595, -0.4302),
-]
-
-
-def print_comparison_table():
-    header = f"{'Prompt':<22} {'Type':<10} {'Rewrite Gap':>12} {'Baseline Gap':>13} {'Improvement':>12}"
-    print(header)
-    print("=" * 72)
-
-    rewrite_gaps, baseline_gaps = [], []
-
-    for prompt, ptype, rg, rb, bg, bb in RESULTS:
-        r_gap = rg - rb
-        b_gap = bg - bb
-        rewrite_gaps.append(r_gap)
-        baseline_gaps.append(b_gap)
-
-        if r_gap > 0 and b_gap > 0:
-            improvement = f"+{((r_gap - b_gap) / b_gap) * 100:.0f}%"
-        elif r_gap <= 0:
-            improvement = "failed"
-        else:
-            improvement = "—"
-
-        print(f"{prompt:<22} {ptype:<10} {r_gap:>12.4f} {b_gap:>13.4f} {improvement:>12}")
-
-    print("=" * 72)
-
-    valid = [
-        (r, b)
-        for (name, *_), r, b in zip(RESULTS, rewrite_gaps, baseline_gaps)
-        if "Haiku" not in name
-    ]
-    valid_r = [r for r, b in valid]
-    valid_b = [b for r, b in valid]
-
-    avg_r = sum(valid_r) / len(valid_r)
-    avg_b = sum(valid_b) / len(valid_b)
-    overall = ((avg_r - avg_b) / avg_b) * 100
-
-    print(f"{'Avg':<22} {'':<10} {avg_r:>12.4f} {avg_b:>13.4f} {f'+{overall:.0f}%':>12}")
-    print(f"\n  Rewrite wins : {sum(r > b for r, b in zip(rewrite_gaps, baseline_gaps))}/6 cases")
-    print(f"  Avg improvement: {overall:.1f}% larger gap")
-
-
-# ---------------------------------------------------------------------------
-# 10. Export models
-# ---------------------------------------------------------------------------
+ # Export models
 
 def export_models():
     shutil.make_archive("reward_model_rewrite",  "zip", "./reward_model/best_model")
@@ -349,10 +258,7 @@ def export_models():
     shutil.make_archive("rlhf_dataset",          "zip", "./rlhf_data")
     print("Exported: reward_model_rewrite.zip, reward_model_baseline.zip, rlhf_dataset.zip")
 
-
-# ---------------------------------------------------------------------------
 # Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     API_KEY = os.environ.get("GROQ_API_KEY", "")
